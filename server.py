@@ -1,35 +1,65 @@
 import socket
+import random
+
+# Load from Linux built-in dictionary
+with open("/usr/share/dict/words") as f:
+    WORDS = [word.strip().lower() for word in f if word.strip().isalpha()]  
 
 
 
-# Create a socket object (IPv4 + TCP)
+def get_hint(word, hints_given):
+    hints = [
+        f"The word has {len(word)} letters.",
+        f"The word starts with '{word[0]}'.",
+        f"The word ends with '{word[-1]}'.",
+        f"The word contains the letter '{random.choice(word)}'.",
+    ]
+    return hints[hints_given % len(hints)]
+
+# Server setup
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-# Bind to 0.0.0.0:5000
-server.bind(("0.0.0.0", 5001))
-
-# Listen for connections
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # Avoid "address in use" errors
+server.bind(("localhost", 5001))
 server.listen(1)
-print("Waiting for connection...")
+print("Server is listening on port 5001...")
 
-# Accept client connection
-client, addr = server.accept()
-print(f"Connected to {addr}")
+try:
+    conn, addr = server.accept()
+    print(f"Client connected from {addr}")
 
-word = input("What is the word they have to guess?: ")
+    secret_word = random.choice(WORDS)  # Pick a random word
+    print(f"Secret word is: {secret_word}")  # Only visible server-side
+    hints_given = 0
 
-# Receive and echo messages
-while True:
-    msg = client.recv(1024).decode()
-    if msg != word:
-        print(f"Received: {msg}")
-        client.send(f"Guess is wrong, try again".encode())
-    if msg == word:
-        print(f"Received: {msg}")
-        client.send(f"You have guessed the word".encode())
-        word = input("Client has guessed the last word, please pick a new word: ")
-    if not msg:
-        break
+    while True:
+        try:
+            guess = conn.recv(1024).decode()
+            if not guess:
+                print("Client disconnected.")
+                break
 
-client.close()
-server.close()
+            if guess == "HINT":
+                hint = get_hint(secret_word, hints_given)
+                hints_given += 1
+                conn.send(hint.encode())
+                continue
+
+            if guess.lower() == secret_word.lower():
+                conn.send("Correct! Well done!".encode())
+                hints_given = 0  # Reset for new round
+                secret_word = random.choice(WORDS)  # Pick a new word
+                print(f"New secret word is: {secret_word}")
+            else:
+                conn.send("Wrong, try again!".encode())
+
+        except ConnectionResetError:
+            print("Client forcibly disconnected.")
+            break
+
+except KeyboardInterrupt:
+    print("\nShutting down server...")
+
+finally:
+    conn.close()
+    server.close()
+    print("Server closed.")
